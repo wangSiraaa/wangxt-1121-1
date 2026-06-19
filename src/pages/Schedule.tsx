@@ -8,10 +8,20 @@ import StatusBadge from '@/components/StatusBadge';
 const bloodTypes = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'];
 
 function DonorModal({ donor, onClose, onSaved }: { donor?: api.Donor; onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ name: donor?.name || '', blood_type: donor?.blood_type || 'A+', phone: donor?.phone || '' });
+  const [form, setForm] = useState({
+    name: donor?.name || '',
+    blood_type: donor?.blood_type || 'A+',
+    phone: donor?.phone || '',
+    gender: donor?.gender || 'male',
+    birth_date: donor?.birth_date || '',
+  });
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
+    if (!form.name || !form.blood_type || !form.phone || !form.gender || !form.birth_date) {
+      alert('请填写所有必填字段');
+      return;
+    }
     setSaving(true);
     try {
       if (donor) await api.updateDonor(donor.id, form);
@@ -28,20 +38,37 @@ function DonorModal({ donor, onClose, onSaved }: { donor?: api.Donor; onClose: (
         <div className="modal-header">
           <h3 className="font-serif font-bold text-stone-800">{donor ? '编辑献血者' : '新增献血者'}</h3>
         </div>
-        <div className="modal-body">
+        <div className="modal-body space-y-4">
           <div>
-            <label className="form-label">姓名</label>
-            <input className="form-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <label className="form-label">姓名 <span className="text-red-500">*</span></label>
+            <input className="form-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="请输入姓名" />
           </div>
           <div>
-            <label className="form-label">血型</label>
+            <label className="form-label">性别 <span className="text-red-500">*</span></label>
+            <div className="flex gap-4 mt-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="gender" value="male" checked={form.gender === 'male'} onChange={(e) => setForm({ ...form, gender: e.target.value })} className="w-4 h-4" />
+                <span className="text-stone-700">男</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="gender" value="female" checked={form.gender === 'female'} onChange={(e) => setForm({ ...form, gender: e.target.value })} className="w-4 h-4" />
+                <span className="text-stone-700">女</span>
+              </label>
+            </div>
+          </div>
+          <div>
+            <label className="form-label">出生日期 <span className="text-red-500">*</span></label>
+            <input type="date" className="form-input" value={form.birth_date} onChange={(e) => setForm({ ...form, birth_date: e.target.value })} />
+          </div>
+          <div>
+            <label className="form-label">血型 <span className="text-red-500">*</span></label>
             <select className="form-input" value={form.blood_type} onChange={(e) => setForm({ ...form, blood_type: e.target.value })}>
               {bloodTypes.map((bt) => <option key={bt} value={bt}>{bt}</option>)}
             </select>
           </div>
           <div>
-            <label className="form-label">联系电话</label>
-            <input className="form-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            <label className="form-label">联系电话 <span className="text-red-500">*</span></label>
+            <input className="form-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="请输入联系电话" />
           </div>
         </div>
         <div className="modal-footer">
@@ -174,8 +201,13 @@ export default function Schedule() {
 
   const handleDeleteDonor = async (id: string) => {
     if (!confirm('确定删除此献血者？')) return;
-    try { await api.updateDonor(id, {} as Partial<api.Donor>); fetchDonors(); }
-    catch { fetchDonors(); }
+    try {
+      await api.deleteDonor(id);
+      fetchDonors();
+    } catch (e) {
+      alert('删除失败: ' + (e as Error).message);
+      fetchDonors();
+    }
   };
 
   const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
@@ -194,6 +226,8 @@ export default function Schedule() {
             <thead>
               <tr className="border-b border-stone-100">
                 <th className="px-5 py-3 text-left font-medium text-stone-500">姓名</th>
+                <th className="px-5 py-3 text-left font-medium text-stone-500">性别</th>
+                <th className="px-5 py-3 text-left font-medium text-stone-500">出生日期</th>
                 <th className="px-5 py-3 text-left font-medium text-stone-500">血型</th>
                 <th className="px-5 py-3 text-left font-medium text-stone-500">电话</th>
                 <th className="px-5 py-3 text-left font-medium text-stone-500">献血次数</th>
@@ -204,6 +238,8 @@ export default function Schedule() {
               {donors.map((d, i) => (
                 <tr key={d.id} className={`border-b border-stone-50 ${i % 2 === 1 ? 'table-row-even' : ''}`}>
                   <td className="px-5 py-3 font-medium text-stone-700">{d.name}</td>
+                  <td className="px-5 py-3 text-stone-600">{d.gender === 'male' ? '男' : '女'}</td>
+                  <td className="px-5 py-3 text-stone-600">{d.birth_date}</td>
                   <td className="px-5 py-3"><BloodTypeBadge type={d.blood_type} /></td>
                   <td className="px-5 py-3 text-stone-600">{d.phone}</td>
                   <td className="px-5 py-3 text-stone-600">{d.donation_count}</td>
@@ -218,7 +254,7 @@ export default function Schedule() {
                 </tr>
               ))}
               {donors.length === 0 && (
-                <tr><td colSpan={5} className="px-5 py-8 text-center text-stone-400">暂无献血者数据</td></tr>
+                <tr><td colSpan={7} className="px-5 py-8 text-center text-stone-400">暂无献血者数据</td></tr>
               )}
             </tbody>
           </table>

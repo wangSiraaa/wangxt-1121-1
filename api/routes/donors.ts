@@ -75,4 +75,19 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
   }
 })
 
+router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params
+    const existing = queryOne('SELECT * FROM donors WHERE id = ?', [id])
+    if (!existing) {
+      res.status(404).json({ success: false, error: '献血者不存在' })
+      return
+    }
+    run('DELETE FROM donors WHERE id = ?', [id])
+    res.json({ success: true, data: { ok: true } })
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) })
+  }
+})
+
 export default router

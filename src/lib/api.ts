@@ -33,6 +33,8 @@ export interface Donor {
   name: string;
   blood_type: string;
   phone: string;
+  gender: string;
+  birth_date: string;
   donation_count: number;
   created_at?: string;
 }
@@ -115,6 +117,7 @@ export interface DashboardTodos {
 export const fetchDonors = () => request<Donor[]>('/donors');
 export const createDonor = (d: Partial<Donor>) => post<Donor>('/donors', d);
 export const updateDonor = (id: string, d: Partial<Donor>) => put<Donor>(`/donors/${id}`, d);
+export const deleteDonor = (id: string) => del<{ ok: boolean }>(`/donors/${id}`);
 export const getDonor = (id: string) => request<Donor>(`/donors/${id}`);
 
 export const fetchSlots = (month?: string) => request<Slot[]>(month ? `/slots?month=${month}` : '/slots');
