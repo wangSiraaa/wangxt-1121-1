@@ -47,7 +47,8 @@ export interface Slot {
   date: string;
   time_start: string;
   time_end: string;
-  status: 'available' | 'booked' | 'completed' | 'cancelled';
+  status: 'available' | 'booked' | 'completed' | 'cancelled' | 'no_show';
+  no_show_reason?: string | null;
   created_at?: string;
 }
 
@@ -65,6 +66,8 @@ export interface Screening {
   result: 'passed' | 'failed';
   screener: string;
   screened_at: string;
+  is_retest?: number;
+  original_screening_id?: string | null;
 }
 
 export interface InventoryItem {
@@ -73,11 +76,13 @@ export interface InventoryItem {
   donor_id: string;
   donor_name?: string;
   blood_type: string;
+  batch_no?: string;
   collection_time: string;
   expiry_time: string;
   volume_ml: number;
-  status: 'available' | 'distributed' | 'expired' | 'discarded';
+  status: 'available' | 'distributed' | 'expired' | 'discarded' | 'retest_failed';
   blood_type_locked: number;
+  removal_reason?: string | null;
   created_at?: string;
 }
 
@@ -85,6 +90,8 @@ export interface HospitalRequest {
   id: string;
   hospital_name: string;
   distance_km: number;
+  hospital_level: string;
+  transport_hours: number;
   blood_type: string;
   quantity: number;
   urgency: 'critical' | 'urgent' | 'routine';
@@ -97,6 +104,8 @@ export interface Distribution {
   inventory_id: string;
   request_id: string;
   hospital_name: string;
+  blood_type: string;
+  batch_no: string;
   distributed_at: string;
   operator: string;
 }
@@ -114,6 +123,26 @@ export interface DashboardTodos {
   pending_requests: Array<{ id: string; hospital_name: string; blood_type: string; quantity: number; urgency: string; distance_km: number }>;
 }
 
+export interface QuotaImpact {
+  date: string;
+  daily_quota: number;
+  separation_capacity: number;
+  total_slots: number;
+  booked_slots: number;
+  completed_slots: number;
+  no_show_slots: number;
+  available_slots: number;
+  effective_collection: number;
+  quota_deficit: number;
+  quota_at_risk: boolean;
+  separation_load: number;
+  separation_remaining: number;
+  separation_overloaded: boolean;
+  donor_blood_type: string | null;
+  affected_blood_deficit: number;
+  blood_type_distribution: Array<{ blood_type: string; cnt: number }>;
+}
+
 export const fetchDonors = () => request<Donor[]>('/donors');
 export const createDonor = (d: Partial<Donor>) => post<Donor>('/donors', d);
 export const updateDonor = (id: string, d: Partial<Donor>) => put<Donor>(`/donors/${id}`, d);
@@ -124,9 +153,12 @@ export const fetchSlots = (month?: string) => request<Slot[]>(month ? `/slots?mo
 export const createSlot = (s: Partial<Slot>) => post<Slot>('/slots', s);
 export const updateSlot = (id: string, s: Partial<Slot>) => put<Slot>(`/slots/${id}`, s);
 export const deleteSlot = (id: string) => del<{ ok: boolean }>(`/slots/${id}`);
+export const fetchQuotaImpact = (date: string) => request<QuotaImpact>(`/slots/quota-impact?date=${date}`);
 
 export const fetchScreenings = () => request<Screening[]>('/screenings');
 export const createScreening = (s: Partial<Screening>) => post<Screening>('/screenings', s);
+export const createRetest = (s: Partial<Screening> & { original_screening_id: string; retest_reason?: string }) =>
+  post<Screening & { removed_bags?: number }>('/screenings/retest', s);
 
 export const fetchInventory = () => request<InventoryItem[]>('/inventory');
 export const updateInventory = (id: string, d: Partial<InventoryItem>) => put<InventoryItem>(`/inventory/${id}`, d);
@@ -140,3 +172,13 @@ export const createDistribution = (d: Partial<Distribution>) => post<Distributio
 
 export const fetchDashboardStats = () => request<DashboardStats>('/dashboard/stats');
 export const fetchDashboardTodos = () => request<DashboardTodos>('/dashboard/todos');
+
+export const hospitalLevelLabel = (level: string) => {
+  const map: Record<string, string> = {
+    tertiary_a: '三甲',
+    tertiary_b: '三乙',
+    secondary: '二甲',
+    primary: '一甲',
+  };
+  return map[level] || level;
+};

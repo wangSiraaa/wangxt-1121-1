@@ -41,10 +41,15 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
     const { blood_type, status, volume_ml } = req.body
 
     if (blood_type && blood_type !== existing.blood_type) {
-      if (existing.blood_type_locked || existing.status === 'distributed') {
-        res.status(400).json({ success: false, error: '血型已锁定或已分发，无法更改' })
+      if (existing.blood_type_locked || existing.status === 'distributed' || existing.status === 'retest_failed') {
+        res.status(400).json({ success: false, error: '血型已锁定或已分发/复检不合格，无法更改' })
         return
       }
+    }
+
+    if (existing.status === 'retest_failed' && status && status !== 'retest_failed') {
+      res.status(400).json({ success: false, error: '复检不合格血袋不可手动恢复状态' })
+      return
     }
 
     const row = existing

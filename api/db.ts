@@ -33,6 +33,7 @@ export async function initDb(): Promise<Database> {
   db = buf ? new SQL.Database(buf) : new SQL.Database()
 
   createTables()
+  migrateDb()
   seedData()
   saveDb()
 
@@ -67,6 +68,7 @@ function createTables(): void {
       time_start TEXT NOT NULL,
       time_end TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'available',
+      no_show_reason TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY (donor_id) REFERENCES donors(id)
     )
@@ -85,8 +87,11 @@ function createTables(): void {
       result TEXT NOT NULL,
       screened_at TEXT NOT NULL,
       screener TEXT NOT NULL,
+      is_retest INTEGER DEFAULT 0,
+      original_screening_id TEXT,
       FOREIGN KEY (appointment_id) REFERENCES slots(id),
-      FOREIGN KEY (donor_id) REFERENCES donors(id)
+      FOREIGN KEY (donor_id) REFERENCES donors(id),
+      FOREIGN KEY (original_screening_id) REFERENCES screenings(id)
     )
   `)
 
@@ -96,11 +101,13 @@ function createTables(): void {
       screening_id TEXT,
       donor_id TEXT NOT NULL,
       blood_type TEXT NOT NULL,
+      batch_no TEXT,
       collection_time TEXT NOT NULL,
       expiry_time TEXT NOT NULL,
       volume_ml INTEGER DEFAULT 250,
       status TEXT NOT NULL DEFAULT 'available',
       blood_type_locked INTEGER DEFAULT 0,
+      removal_reason TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY (screening_id) REFERENCES screenings(id),
       FOREIGN KEY (donor_id) REFERENCES donors(id)
@@ -112,6 +119,8 @@ function createTables(): void {
       id TEXT PRIMARY KEY,
       hospital_name TEXT NOT NULL,
       distance_km REAL NOT NULL,
+      hospital_level TEXT DEFAULT 'secondary',
+      transport_hours REAL DEFAULT 0,
       blood_type TEXT NOT NULL,
       quantity INTEGER NOT NULL DEFAULT 1,
       urgency TEXT NOT NULL DEFAULT 'routine',
@@ -126,12 +135,58 @@ function createTables(): void {
       inventory_id TEXT NOT NULL,
       request_id TEXT NOT NULL,
       hospital_name TEXT NOT NULL,
+      blood_type TEXT NOT NULL,
+      batch_no TEXT,
       distributed_at TEXT NOT NULL,
       operator TEXT NOT NULL,
       FOREIGN KEY (inventory_id) REFERENCES inventory(id),
       FOREIGN KEY (request_id) REFERENCES hospital_requests(id)
     )
   `)
+}
+
+function migrateDb(): void {
+  const cols = queryAll<Record<string, unknown>>("PRAGMA table_info(slots)")
+  const colNames = cols.map((c) => c.name)
+  if (!colNames.includes('no_show_reason')) {
+    db.run('ALTER TABLE slots ADD COLUMN no_show_reason TEXT')
+  }
+
+  const screenCols = queryAll<Record<string, unknown>>("PRAGMA table_info(screenings)")
+  const screenColNames = screenCols.map((c) => c.name)
+  if (!screenColNames.includes('is_retest')) {
+    db.run('ALTER TABLE screenings ADD COLUMN is_retest INTEGER DEFAULT 0')
+  }
+  if (!screenColNames.includes('original_screening_id')) {
+    db.run('ALTER TABLE screenings ADD COLUMN original_screening_id TEXT')
+  }
+
+  const invCols = queryAll<Record<string, unknown>>("PRAGMA table_info(inventory)")
+  const invColNames = invCols.map((c) => c.name)
+  if (!invColNames.includes('batch_no')) {
+    db.run('ALTER TABLE inventory ADD COLUMN batch_no TEXT')
+  }
+  if (!invColNames.includes('removal_reason')) {
+    db.run('ALTER TABLE inventory ADD COLUMN removal_reason TEXT')
+  }
+
+  const reqCols = queryAll<Record<string, unknown>>("PRAGMA table_info(hospital_requests)")
+  const reqColNames = reqCols.map((c) => c.name)
+  if (!reqColNames.includes('hospital_level')) {
+    db.run("ALTER TABLE hospital_requests ADD COLUMN hospital_level TEXT DEFAULT 'secondary'")
+  }
+  if (!reqColNames.includes('transport_hours')) {
+    db.run('ALTER TABLE hospital_requests ADD COLUMN transport_hours REAL DEFAULT 0')
+  }
+
+  const distCols = queryAll<Record<string, unknown>>("PRAGMA table_info(distributions)")
+  const distColNames = distCols.map((c) => c.name)
+  if (!distColNames.includes('blood_type')) {
+    db.run('ALTER TABLE distributions ADD COLUMN blood_type TEXT')
+  }
+  if (!distColNames.includes('batch_no')) {
+    db.run('ALTER TABLE distributions ADD COLUMN batch_no TEXT')
+  }
 }
 
 function seedData(): void {
@@ -183,8 +238,8 @@ function seedData(): void {
     if (status === 'booked') bookedSlotIds.push(id)
 
     db.run(
-      `INSERT INTO slots (id, donor_id, date, time_start, time_end, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, donorId, dateStr, `${String(hour).padStart(2, '0')}:00`, `${String(hour + 2).padStart(2, '0')}:00`, status, now.toISOString()]
+      `INSERT INTO slots (id, donor_id, date, time_start, time_end, status, no_show_reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, donorId, dateStr, `${String(hour).padStart(2, '0')}:00`, `${String(hour + 2).padStart(2, '0')}:00`, status, null, now.toISOString()]
     )
   }
 
@@ -203,20 +258,20 @@ function seedData(): void {
     screeningIds.push(id)
     const screenedAt = new Date(now.getTime() - Math.random() * 86400000 * 2)
     db.run(
-      `INSERT INTO screenings (id, appointment_id, donor_id, hbsag, hcv, hiv, syphilis, alt_value, result, screened_at, screener) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, slotIds[s.slotIdx], donorIds[s.donorIdx], s.hbsag, s.hcv, s.hiv, s.syphilis, s.alt_value, s.result, screenedAt.toISOString(), s.screener]
+      `INSERT INTO screenings (id, appointment_id, donor_id, hbsag, hcv, hiv, syphilis, alt_value, result, screened_at, screener, is_retest, original_screening_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, slotIds[s.slotIdx], donorIds[s.donorIdx], s.hbsag, s.hcv, s.hiv, s.syphilis, s.alt_value, s.result, screenedAt.toISOString(), s.screener, 0, null]
     )
   }
 
   const inventoryData = [
-    { screeningIdx: 0, donorIdx: 2, blood_type: 'B+', hoursAgo: 48, status: 'available' },
-    { screeningIdx: 1, donorIdx: 6, blood_type: 'B-', hoursAgo: 36, status: 'available' },
-    { screeningIdx: 2, donorIdx: 0, blood_type: 'A+', hoursAgo: 72, status: 'available' },
-    { screeningIdx: 3, donorIdx: 4, blood_type: 'A-', hoursAgo: 24, status: 'discarded' },
-    { screeningIdx: 4, donorIdx: 1, blood_type: 'O+', hoursAgo: 12, status: 'available' },
-    { screeningIdx: 5, donorIdx: 7, blood_type: 'A+', hoursAgo: 60, status: 'discarded' },
-    { screeningIdx: 0, donorIdx: 2, blood_type: 'B+', hoursAgo: 96, status: 'expired' },
-    { screeningIdx: 1, donorIdx: 6, blood_type: 'B-', hoursAgo: 108, status: 'distributed' },
+    { screeningIdx: 0, donorIdx: 2, blood_type: 'B+', hoursAgo: 48, status: 'available', removal_reason: null },
+    { screeningIdx: 1, donorIdx: 6, blood_type: 'B-', hoursAgo: 36, status: 'available', removal_reason: null },
+    { screeningIdx: 2, donorIdx: 0, blood_type: 'A+', hoursAgo: 72, status: 'available', removal_reason: null },
+    { screeningIdx: 3, donorIdx: 4, blood_type: 'A-', hoursAgo: 24, status: 'discarded', removal_reason: '初检HCV阳性' },
+    { screeningIdx: 4, donorIdx: 1, blood_type: 'O+', hoursAgo: 12, status: 'available', removal_reason: null },
+    { screeningIdx: 5, donorIdx: 7, blood_type: 'A+', hoursAgo: 60, status: 'discarded', removal_reason: '初检HBsAg阳性' },
+    { screeningIdx: 0, donorIdx: 2, blood_type: 'B+', hoursAgo: 96, status: 'expired', removal_reason: null },
+    { screeningIdx: 1, donorIdx: 6, blood_type: 'B-', hoursAgo: 108, status: 'distributed', removal_reason: null },
   ]
 
   const inventoryIds: string[] = []
@@ -226,18 +281,19 @@ function seedData(): void {
     const collTime = new Date(now.getTime() - inv.hoursAgo * 3600000)
     const expTime = new Date(collTime.getTime() + 5 * 86400000)
     const locked = inv.status === 'distributed' ? 1 : 0
+    const batchNo = `PLT-${collTime.toISOString().slice(0, 10).replace(/-/g, '')}-${String(inventoryIds.length + 1).padStart(3, '0')}`
     db.run(
-      `INSERT INTO inventory (id, screening_id, donor_id, blood_type, collection_time, expiry_time, volume_ml, status, blood_type_locked, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, screeningIds[inv.screeningIdx], donorIds[inv.donorIdx], inv.blood_type, collTime.toISOString(), expTime.toISOString(), 250, inv.status, locked, collTime.toISOString()]
+      `INSERT INTO inventory (id, screening_id, donor_id, blood_type, batch_no, collection_time, expiry_time, volume_ml, status, blood_type_locked, removal_reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, screeningIds[inv.screeningIdx], donorIds[inv.donorIdx], inv.blood_type, batchNo, collTime.toISOString(), expTime.toISOString(), 250, inv.status, locked, inv.removal_reason, collTime.toISOString()]
     )
   }
 
   const requestData = [
-    { hospital_name: '市中心医院', distance_km: 15, blood_type: 'A+', quantity: 2, urgency: 'routine' as const, status: 'pending' },
-    { hospital_name: '省人民医院', distance_km: 85, blood_type: 'O+', quantity: 3, urgency: 'urgent' as const, status: 'pending' },
-    { hospital_name: '开发区医院', distance_km: 120, blood_type: 'B+', quantity: 1, urgency: 'critical' as const, status: 'pending' },
-    { hospital_name: '大学附属医院', distance_km: 30, blood_type: 'AB+', quantity: 2, urgency: 'routine' as const, status: 'fulfilled' },
-    { hospital_name: '第二人民医院', distance_km: 55, blood_type: 'A-', quantity: 1, urgency: 'urgent' as const, status: 'cancelled' },
+    { hospital_name: '市中心医院', distance_km: 15, hospital_level: 'tertiary_a', transport_hours: 0.5, blood_type: 'A+', quantity: 2, urgency: 'routine' as const, status: 'pending' },
+    { hospital_name: '省人民医院', distance_km: 85, hospital_level: 'tertiary_a', transport_hours: 2, blood_type: 'O+', quantity: 3, urgency: 'urgent' as const, status: 'pending' },
+    { hospital_name: '开发区医院', distance_km: 120, hospital_level: 'secondary', transport_hours: 3.5, blood_type: 'B+', quantity: 1, urgency: 'critical' as const, status: 'pending' },
+    { hospital_name: '大学附属医院', distance_km: 30, hospital_level: 'tertiary_b', transport_hours: 1, blood_type: 'AB+', quantity: 2, urgency: 'routine' as const, status: 'fulfilled' },
+    { hospital_name: '第二人民医院', distance_km: 55, hospital_level: 'secondary', transport_hours: 1.5, blood_type: 'A-', quantity: 1, urgency: 'urgent' as const, status: 'cancelled' },
   ]
 
   const requestIds: string[] = []
@@ -245,17 +301,18 @@ function seedData(): void {
     const id = uuidv4()
     requestIds.push(id)
     db.run(
-      `INSERT INTO hospital_requests (id, hospital_name, distance_km, blood_type, quantity, urgency, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, r.hospital_name, r.distance_km, r.blood_type, r.quantity, r.urgency, r.status, now.toISOString()]
+      `INSERT INTO hospital_requests (id, hospital_name, distance_km, hospital_level, transport_hours, blood_type, quantity, urgency, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, r.hospital_name, r.distance_km, r.hospital_level, r.transport_hours, r.blood_type, r.quantity, r.urgency, r.status, now.toISOString()]
     )
   }
 
   const distInvIdx = 7
   const distReqIdx = 3
   const distId = uuidv4()
+  const distInv = queryOne('SELECT * FROM inventory WHERE id = ?', [inventoryIds[distInvIdx]]) as Record<string, unknown>
   db.run(
-    `INSERT INTO distributions (id, inventory_id, request_id, hospital_name, distributed_at, operator) VALUES (?, ?, ?, ?, ?, ?)`,
-    [distId, inventoryIds[distInvIdx], requestIds[distReqIdx], requestData[distReqIdx].hospital_name, now.toISOString(), '赵管理员']
+    `INSERT INTO distributions (id, inventory_id, request_id, hospital_name, blood_type, batch_no, distributed_at, operator) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [distId, inventoryIds[distInvIdx], requestIds[distReqIdx], requestData[distReqIdx].hospital_name, distInv.blood_type, distInv.batch_no ?? '', now.toISOString(), '赵管理员']
   )
 }
 
